@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dino Shooter Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #121820;
+      --ground: #8d929a;
+      --player: #49c95b;
+      --bullet: #ffd84c;
+      --enemy: #f13946;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    body {
+      display: grid;
+      place-items: stretch;
+    }
+
+    canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      background:
+        linear-gradient(#111720 0%, #151c26 58%, #111720 100%);
+      cursor: crosshair;
+    }
+
+  </style>
+</head>
+<body>
+  <canvas id="game" aria-label="Dino shooter movement and shooting prototype"></canvas>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    const keys = new Set();
+    const bullets = [];
+    const enemies = [];
+
+    const world = {
+      width: 0,
+      height: 0,
+      groundY: 0,
+      gravity: 2100,
+      spawnTimer: 0,
+      spawnDelay: 1.1,
+      wave: 0,
+      enemiesToSpawn: 0,
+      enemiesSpawned: 0,
+      score: 0,
+      wavePause: 0,
+      gameOver: false
+    };
+
+    const player = {
+      x: 120,
+      y: 0,
+      width: 46,
+      height: 58,
+      vx: 0,
+      vy: 0,
+      speed: 430,
+      jumpPower: 810,
+      onGround: false,
+      fireCooldown: 0,
+      lives: 3,
+      ammo: 8,
+      maxAmmo: 8,
+      reloadTimer: 0,
+      reloadTime: 1.8,
+      reloading: false
+    };
+
+    function resize() {
+      const ratio = Math.max(1, window.devicePixelRatio || 1);
+      world.width = Math.floor(window.innerWidth);
+      world.height = Math.floor(window.innerHeight);
+      canvas.width = Math.floor(world.width * ratio);
+      canvas.height = Math.floor(world.height * ratio);
+      canvas.style.width = `${world.width}px`;
+      canvas.style.height = `${world.height}px`;
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      world.groundY = Math.max(260, world.height - Math.min(86, world.height * 0.16));
+      player.y = Math.min(player.y || world.groundY - player.height, world.groundY - player.height);
+      player.x = Math.min(player.x, world.width - player.width - 12);
+    }
+
+    function enemiesForWave(wave) {
+      if (wave === 1) return 5;
+      if (wave === 2) return 8;
+      if (wave === 3) return 12;
+      return 12 + (wave - 3) * 4;
+    }
+
+    function startWave() {
+      world.wave += 1;
+      world.enemiesToSpawn = enemiesForWave(world.wave);
+      world.enemiesSpawned = 0;
+      world.spawnTimer = 0.5;
+      world.spawnDelay = Math.max(0.45, 1.15 - world.wave * 0.08);
+      world.wavePause = 0;
+    }
+
+    function spawnEnemy() {
+      const size = 44 + Math.random() * 14;
+      enemies.push({
+        x: world.width + size,
+        y: world.groundY - size,
+        width: size,
+        height: size,
+        speed: 105 + world.wave * 18 + Math.random() * 42
+      });
+      world.enemiesSpawned += 1;
+    }
+
+    function startReload() {
+      if (player.reloading || player.ammo === player.maxAmmo) return;
+      player.reloading = true;
+      player.reloadTimer = player.reloadTime;
+    }
+
+    function shoot() {
+      if (world.gameOver) return;
+      if (player.fireCooldown > 0) return;
+      if (player.reloading) return;
+      if (player.ammo <= 0) {
+        startReload();
+        return;
+      }
+
+      bullets.push({
+        x: player.x + player.width + 8,
+        y: player.y + player.height * 0.42,
+        width: 30,
+        height: 10,
+        speed: 780
+      });
+      player.ammo -= 1;
+      player.fireCooldown = 0.5;
+    }
+
+    function intersects(a, b) {
+      return (
+        a.x < b.x + b.width &&
+        a.x + a.width > b.x &&
+        a.y < b.y + b.height &&
+        a.y + a.height > b.y
+      );
+    }
+
+    function update(dt) {
+      if (world.gameOver) return;
+
+      const left = keys.has("a");
+      const right = keys.has("d");
+
+      player.vx = 0;
+      if (left) player.vx -= player.speed;
+      if (right) player.vx += player.speed;
+
+      player.x += player.vx * dt;
+      player.x = Math.max(12, Math.min(world.width - player.width - 12, player.x));
+
+      player.vy += world.gravity * dt;
+      player.y += player.vy * dt;
+
+      const floor = world.groundY - player.height;
+      if (player.y >= floor) {
+        player.y = floor;
+        player.vy = 0;
+        player.onGround = true;
+      } else {
+        player.onGround = false;
+      }
+
+      player.fireCooldown = Math.max(0, player.fireCooldown - dt);
+      if (player.reloading) {
+        player.reloadTimer = Math.max(0, player.reloadTimer - dt);
+        if (player.reloadTimer === 0) {
+          player.ammo = player.maxAmmo;
+          player.reloading = false;
+        }
+      }
+
+      for (let i = bullets.length - 1; i >= 0; i -= 1) {
+        bullets[i].x += bullets[i].speed * dt;
+        if (bullets[i].x > world.width + bullets[i].width) {
+          bullets.splice(i, 1);
+        }
+      }
+
+      world.spawnTimer -= dt;
+      if (world.enemiesSpawned < world.enemiesToSpawn && world.spawnTimer <= 0) {
+        spawnEnemy();
+        world.spawnTimer = world.spawnDelay;
+      }
+
+      for (let i = enemies.length - 1; i >= 0; i -= 1) {
+        enemies[i].x -= enemies[i].speed * dt;
+        if (intersects(enemies[i], player)) {
+          enemies.splice(i, 1);
+          player.lives = Math.max(0, player.lives - 1);
+          if (player.lives <= 0) {
+            world.gameOver = true;
+          }
+        } else if (enemies[i].x + enemies[i].width < -40) {
+          enemies.splice(i, 1);
+        }
+      }
+      
+
+      for (let enemyIndex = enemies.length - 1; enemyIndex >= 0; enemyIndex -= 1) {
+        for (let bulletIndex = bullets.length - 1; bulletIndex >= 0; bulletIndex -= 1) {
+          if (intersects(enemies[enemyIndex], bullets[bulletIndex])) {
+            enemies.splice(enemyIndex, 1);
+            bullets.splice(bulletIndex, 1);
+            console.log("KILL", world.score);
+            world.score += 10;
+            break;
+          }
+        }
+      }
+
+      if (
+        world.enemiesSpawned === world.enemiesToSpawn &&
+        enemies.length === 0 &&
+        !world.gameOver
+      ) {
+        if (world.wavePause <= 0) {
+          world.score += 50;
+          world.wavePause = 1.0;
+        } else {
+          world.wavePause -= dt;
+        }
+
+        if (world.wavePause <= 0) {
+          startWave();
+        }
+      }
+    }
+
+    function drawGround() {
+      ctx.fillStyle = "#8d929a";
+      ctx.fillRect(0, world.groundY, world.width, world.height - world.groundY);
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.18)";
+      ctx.fillRect(0, world.groundY, world.width, 3);
+    }
+
+    function drawPlayer() {
+      ctx.fillStyle = "#49c95b";
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.24)";
+      ctx.fillRect(player.x + player.width - 10, player.y + 12, 6, 6);
+    }
+
+    function drawBullets() {
+      ctx.fillStyle = "#ffd84c";
+      for (const bullet of bullets) {
+        ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+      }
+    }
+
+    function drawEnemies() {
+      ctx.fillStyle = "#f13946";
+      for (const enemy of enemies) {
+        ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+      }
+    }
+
+    function drawHud() {
+      ctx.fillStyle = "#f5f7fb";
+      ctx.font = "700 18px Arial, Helvetica, sans-serif";
+      ctx.textBaseline = "top";
+      ctx.fillText(`Score: ${world.score}`, 18, 16);
+      ctx.fillText(`Wave: ${world.wave}`, 18, 42);
+      ctx.fillText(`Enemies: ${enemies.length}`, 18, 68);
+
+      const ammoText = player.reloading
+        ? `Ammo: ${player.ammo}/${player.maxAmmo}  RELOADING`
+        : `Ammo: ${player.ammo}/${player.maxAmmo}`;
+      const livesText = `Lives: ${player.lives}`;
+      ctx.textAlign = "right";
+      ctx.fillText(livesText, world.width - 18, 16);
+      ctx.fillText(ammoText, world.width - 18, 42);
+      ctx.textAlign = "left";
+    }
+
+    function drawGameOver() {
+      if (!world.gameOver) return;
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.58)";
+      ctx.fillRect(0, 0, world.width, world.height);
+      ctx.fillStyle = "#f5f7fb";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "700 52px Arial, Helvetica, sans-serif";
+      ctx.fillText("GAME OVER", world.width / 2, world.height / 2 - 38);
+      ctx.font = "700 22px Arial, Helvetica, sans-serif";
+      ctx.fillText(`Wave: ${world.wave}`, world.width / 2, world.height / 2 + 22);
+      ctx.fillText(`Score: ${world.score}`, world.width / 2, world.height / 2 + 56);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, world.width, world.height);
+      drawGround();
+      drawBullets();
+      drawPlayer();
+      drawEnemies();
+      drawHud();
+      drawGameOver();
+    }
+
+    let lastTime = performance.now();
+    function frame(time) {
+      const dt = Math.min(0.033, (time - lastTime) / 1000);
+      lastTime = time;
+      update(dt);
+      draw();
+      requestAnimationFrame(frame);
+    }
+
+    window.addEventListener("resize", resize);
+
+    window.addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      keys.add(key);
+
+      if (key === " " && player.onGround) {
+        player.vy = -player.jumpPower;
+        player.onGround = false;
+      }
+
+      if (key === " ") {
+        event.preventDefault();
+      }
+
+      if (key === "r") {
+        startReload();
+      }
+    });
+
+    window.addEventListener("keyup", (event) => {
+      keys.delete(event.key.toLowerCase());
+    });
+
+    canvas.addEventListener("pointerdown", (event) => {
+      if (event.button === 0) {
+        shoot();
+      }
+    });
+
+    resize();
+    startWave();
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
